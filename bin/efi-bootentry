@@ -13,38 +13,63 @@ Usage:
   efi-bootentry deactivate FILEPATH
   efi-bootentry bootnext FILEPATH
   efi-bootentry index FILEPATH
+  efi-bootentry get (next|current|INDEX)
 "
 # docopt parser below, refresh this parser with `docopt.sh efi-bootentry`
 # shellcheck disable=2016,2086,2317,1090,1091,2034
 docopt() { local v='2.0.2'; source \
 "$PKGROOT/.upkg/docopt-lib-v$v/docopt-lib.sh" "$v" || { ret=$?;printf -- "exit \
-%d\n" "$ret";exit "$ret";};set -e;trimmed_doc=${DOC:0:256};usage=${DOC:48:208}
-digest=08b1c;options=();node_0(){ value FILEPATH a;};node_1(){ value LABEL a;}
-node_2(){ switch add a:add;};node_3(){ switch remove a:remove;};node_4(){
-switch activate a:activate;};node_5(){ switch deactivate a:deactivate;}
-node_6(){ switch bootnext a:bootnext;};node_7(){ switch index a:index;}
-node_8(){ sequence 2 0 1;};node_9(){ sequence 3 0;};node_10(){ sequence 4 0;}
-node_11(){ sequence 5 0;};node_12(){ sequence 6 0;};node_13(){ sequence 7 0;}
-node_14(){ choice 8 9 10 11 12 13;};cat <<<' docopt_exit() { [[ -n $1 ]] && \
-printf "%s\n" "$1" >&2;printf "%s\n" "${DOC:48:208}" >&2;exit 1;}';local \
-varnames=(FILEPATH LABEL add remove activate deactivate bootnext index) varname
-for varname in "${varnames[@]}"; do unset "var_$varname";done;parse 14 "$@"
-local p=${DOCOPT_PREFIX:-''};for varname in "${varnames[@]}"; do unset \
-"$p$varname";done;eval $p'FILEPATH=${var_FILEPATH:-};'$p'LABEL=${var_LABEL:-};'\
-$p'add=${var_add:-false};'$p'remove=${var_remove:-false};'$p'activate=${var_ac'\
-'tivate:-false};'$p'deactivate=${var_deactivate:-false};'$p'bootnext=${var_boo'\
-'tnext:-false};'$p'index=${var_index:-false};';local docopt_i=1;[[ \
-$BASH_VERSION =~ ^4.3 ]] && docopt_i=2;for ((;docopt_i>0;docopt_i--)); do for \
-varname in "${varnames[@]}"; do declare -p "$p$varname";done;done;}
+%d\n" "$ret";exit "$ret";};set -e;trimmed_doc=${DOC:0:297};usage=${DOC:48:249}
+digest=4a897;options=();node_0(){ value FILEPATH a;};node_1(){ value LABEL a;}
+node_2(){ value INDEX a;};node_3(){ switch add a:add;};node_4(){ switch remove \
+a:remove;};node_5(){ switch activate a:activate;};node_6(){ switch deactivate \
+a:deactivate;};node_7(){ switch bootnext a:bootnext;};node_8(){ switch index \
+a:index;};node_9(){ switch get a:get;};node_10(){ switch next a:next;}
+node_11(){ switch current a:current;};node_12(){ sequence 3 0 1;};node_13(){
+sequence 4 0;};node_14(){ sequence 5 0;};node_15(){ sequence 6 0;};node_16(){
+sequence 7 0;};node_17(){ sequence 8 0;};node_18(){ sequence 9 19;};node_19(){
+choice 10 11 2;};node_20(){ choice 12 13 14 15 16 17 18;};cat <<<' \
+docopt_exit() { [[ -n $1 ]] && printf "%s\n" "$1" >&2;printf "%s\n" \
+"${DOC:48:249}" >&2;exit 1;}';local varnames=(FILEPATH LABEL INDEX add remove \
+activate deactivate bootnext index get next current) varname;for varname in \
+"${varnames[@]}"; do unset "var_$varname";done;parse 20 "$@";local \
+p=${DOCOPT_PREFIX:-''};for varname in "${varnames[@]}"; do unset "$p$varname"
+done;eval $p'FILEPATH=${var_FILEPATH:-};'$p'LABEL=${var_LABEL:-};'$p'INDEX=${v'\
+'ar_INDEX:-};'$p'add=${var_add:-false};'$p'remove=${var_remove:-false};'$p'act'\
+'ivate=${var_activate:-false};'$p'deactivate=${var_deactivate:-false};'$p'boot'\
+'next=${var_bootnext:-false};'$p'index=${var_index:-false};'$p'get=${var_get:-'\
+'false};'$p'next=${var_next:-false};'$p'current=${var_current:-false};';local \
+docopt_i=1;[[ $BASH_VERSION =~ ^4.3 ]] && docopt_i=2;for \
+((;docopt_i>0;docopt_i--)); do for varname in "${varnames[@]}"; do declare -p \
+"$p$varname";done;done;}
 # docopt parser above, complete command for generating this parser is `docopt.sh --library='"$PKGROOT/.upkg/docopt-lib-v$v/docopt-lib.sh"' efi-bootentry`
   eval "$(docopt "$@")"
 
-  "$PKGROOT/.upkg/.bin/checkdeps" efibootmgr lsblk findmnt
+  "$PKGROOT/.upkg/.bin/checkdeps" efibootmgr findmnt
+
+  local bootnum
+  # shellcheck disable=SC2154
+  if $get; then
+    if $next; then
+      bootnum=$(efibootmgr | grep '^BootNext' | cut -d ' ' -f2) || fatal "Unable to determine BootNext index"
+      get_filepath "$bootnum"
+    elif $current; then
+      bootnum=$(efibootmgr | grep '^BootCurrent' | cut -d ' ' -f2) || fatal "Unable to determine BootCurrent index"
+      get_filepath "$bootnum"
+    elif [[ -n $INDEX ]]; then
+      get_filepath "$INDEX"
+    else
+      return 1
+    fi
+    return 0
+  fi
+
+  "$PKGROOT/.upkg/.bin/checkdeps" lsblk
 
   local efi_path
   efi_path=$(dirname "$FILEPATH")
   local efi_device
-  until efi_device=$(findmnt -o SOURCE -n "$efi_path"); do
+  until efi_device=$(findmnt -no SOURCE "$efi_path"); do
     efi_path=$(dirname "$efi_path")
     [[ $efi_path != / ]] || fatal "Unable to find device path for '%s'" "$FILEPATH"
   done
@@ -59,7 +84,6 @@ varname in "${varnames[@]}"; do declare -p "$p$varname";done;done;}
   entry_path=${FILEPATH#"$efi_path"}
   entry_path=${entry_path//'/'/"\\"}
 
-  local bootnum
   bootnum=$(get_bootnum "$efi_partuuid" "$entry_path") || true
   # shellcheck disable=SC2154
   if $add; then
@@ -104,6 +128,19 @@ get_bootnum() {
   bootnum=${bootnum#'Boot'}
   bootnum=${bootnum%'*'}
   printf "%s\n" "$bootnum"
+}
+
+get_filepath() {
+  local bootnum=$1 entry
+  entry=$(efibootmgr | grep "^Boot$bootnum\*\? ") || fatal "Unable to find EFI bootmenu entry index %s" "$bootnum"
+  if [[ $entry =~ .*HD\(.*,GPT,([0-9a-f-]{36}),.*\)/File\((.*)\)$ ]]; then
+    local efi_path
+    efi_path=$(findmnt -no TARGET "/dev/disk/by-partuuid/${BASH_REMATCH[1]}") || \
+      fatal "Unable to find mountpath for GPT UUID %s" "${BASH_REMATCH[1]}"
+    printf "%s%s\n" "$efi_path" "${BASH_REMATCH[2]//"\\"/'/'}"
+  else
+    fatal "Unable to parse EFI bootmenu entry '%s'" "$entry"
+  fi
 }
 
 main "$@"
