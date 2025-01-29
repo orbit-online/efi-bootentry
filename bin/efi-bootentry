@@ -9,21 +9,31 @@ main() {
 Usage:
   efi-bootentry add FILEPATH LABEL
   efi-bootentry remove FILEPATH
+  efi-bootentry activate FILEPATH
+  efi-bootentry deactivate FILEPATH
+  efi-bootentry bootnext FILEPATH
+  efi-bootentry index FILEPATH
 "
 # docopt parser below, refresh this parser with `docopt.sh efi-bootentry`
 # shellcheck disable=2016,2086,2317,1090,1091,2034
 docopt() { local v='2.0.2'; source \
 "$PKGROOT/.upkg/docopt-lib-v$v/docopt-lib.sh" "$v" || { ret=$?;printf -- "exit \
-%d\n" "$ret";exit "$ret";};set -e;trimmed_doc=${DOC:0:121};usage=${DOC:48:73}
-digest=d7247;options=();node_0(){ value FILEPATH a;};node_1(){ value LABEL a;}
+%d\n" "$ret";exit "$ret";};set -e;trimmed_doc=${DOC:0:256};usage=${DOC:48:208}
+digest=08b1c;options=();node_0(){ value FILEPATH a;};node_1(){ value LABEL a;}
 node_2(){ switch add a:add;};node_3(){ switch remove a:remove;};node_4(){
-sequence 2 0 1;};node_5(){ sequence 3 0;};node_6(){ choice 4 5;};cat <<<' \
-docopt_exit() { [[ -n $1 ]] && printf "%s\n" "$1" >&2;printf "%s\n" \
-"${DOC:48:73}" >&2;exit 1;}';local varnames=(FILEPATH LABEL add remove) varname
-for varname in "${varnames[@]}"; do unset "var_$varname";done;parse 6 "$@"
+switch activate a:activate;};node_5(){ switch deactivate a:deactivate;}
+node_6(){ switch bootnext a:bootnext;};node_7(){ switch index a:index;}
+node_8(){ sequence 2 0 1;};node_9(){ sequence 3 0;};node_10(){ sequence 4 0;}
+node_11(){ sequence 5 0;};node_12(){ sequence 6 0;};node_13(){ sequence 7 0;}
+node_14(){ choice 8 9 10 11 12 13;};cat <<<' docopt_exit() { [[ -n $1 ]] && \
+printf "%s\n" "$1" >&2;printf "%s\n" "${DOC:48:208}" >&2;exit 1;}';local \
+varnames=(FILEPATH LABEL add remove activate deactivate bootnext index) varname
+for varname in "${varnames[@]}"; do unset "var_$varname";done;parse 14 "$@"
 local p=${DOCOPT_PREFIX:-''};for varname in "${varnames[@]}"; do unset \
 "$p$varname";done;eval $p'FILEPATH=${var_FILEPATH:-};'$p'LABEL=${var_LABEL:-};'\
-$p'add=${var_add:-false};'$p'remove=${var_remove:-false};';local docopt_i=1;[[ \
+$p'add=${var_add:-false};'$p'remove=${var_remove:-false};'$p'activate=${var_ac'\
+'tivate:-false};'$p'deactivate=${var_deactivate:-false};'$p'bootnext=${var_boo'\
+'tnext:-false};'$p'index=${var_index:-false};';local docopt_i=1;[[ \
 $BASH_VERSION =~ ^4.3 ]] && docopt_i=2;for ((;docopt_i>0;docopt_i--)); do for \
 varname in "${varnames[@]}"; do declare -p "$p$varname";done;done;}
 # docopt parser above, complete command for generating this parser is `docopt.sh --library='"$PKGROOT/.upkg/docopt-lib-v$v/docopt-lib.sh"' efi-bootentry`
@@ -36,17 +46,12 @@ varname in "${varnames[@]}"; do declare -p "$p$varname";done;done;}
   local efi_device
   until efi_device=$(findmnt -o SOURCE -n "$efi_path"); do
     efi_path=$(dirname "$efi_path")
-    if [[ $efi_path = / ]]; then
-      printf "Unable to find device path for '%s'\n" "$FILEPATH" >&2
-      return 1
-    fi
+    [[ $efi_path != / ]] || fatal "Unable to find device path for '%s'" "$FILEPATH"
   done
   local efi_parttypename
   efi_parttypename=$(lsblk -noparttypename "$efi_device")
-  if [[ $efi_parttypename != 'EFI System' ]]; then
-    printf "Expected the partition type of '%s' to be 'EFI System', not '%s'\n" "$efi_device" "$efi_parttypename" >&2
-    return 1
-  fi
+  [[ $efi_parttypename = 'EFI System' ]] || \
+    fatal "Expected the partition type of '%s' to be 'EFI System', not '%s'" "$efi_device" "$efi_parttypename"
   local efi_partuuid
   efi_partuuid=$(lsblk -nopartuuid "$efi_device")
 
@@ -55,22 +60,38 @@ varname in "${varnames[@]}"; do declare -p "$p$varname";done;done;}
   entry_path=${entry_path//'/'/"\\"}
 
   local bootnum
+  bootnum=$(get_bootnum "$efi_partuuid" "$entry_path") || true
   # shellcheck disable=SC2154
   if $add; then
-    if bootnum=$(get_bootnum "$efi_partuuid" "$entry_path"); then
-      printf "'%s' is already present in the EFI bootmenu at index %s\n" "$FILEPATH" "$bootnum" >&2
+    if [[ -n $bootnum ]]; then
+      info "'%s' is already present in the EFI bootmenu at index %s\n" "$FILEPATH" "$bootnum"
     else
-      efibootmgr -q -c -d "$efi_device" -L "$LABEL" -l "$entry_path"
-      printf "Added the EFI bootmenu for '%s'\n" "$FILEPATH" >&2
+      efibootmgr -qcd "$efi_device" -L "$LABEL" -l "$entry_path"
+      info "Added the EFI bootmenu entry for '%s'" "$FILEPATH"
     fi
   elif $remove; then
-    local removed=false
-    while bootnum=$(get_bootnum "$efi_partuuid" "$entry_path"); do
-      efibootmgr -q -B -b "$bootnum"
-      printf "Removed EFI bootmenu entry at index %s\n" "$bootnum" >&2
-      removed=true
-    done
-    $removed || printf "'%s' is not present in the EFI bootmenu\n" "$FILEPATH" >&2
+    if [[ -n $bootnum ]]; then
+      efibootmgr -qBb "$bootnum"
+      # Remove duplicates if any
+      while bootnum=$(get_bootnum "$efi_partuuid" "$entry_path"); do
+        efibootmgr -qBb "$bootnum"
+        info "Removed EFI bootmenu entry at index %s" "$bootnum"
+      done
+    else
+      info "'%s' is not present in the EFI bootmenu" "$FILEPATH"
+    fi
+  elif $activate; then
+    [[ -n $bootnum ]] || fatal "'%s' is not present in the EFI bootmenu" "$FILEPATH"
+    efibootmgr -qab "$bootnum"
+  elif $deactivate; then
+    [[ -n $bootnum ]] || fatal "'%s' is not present in the EFI bootmenu" "$FILEPATH"
+    efibootmgr -qAb "$bootnum"
+  elif $bootnext; then
+    [[ -n $bootnum ]] || fatal "'%s' is not present in the EFI bootmenu" "$FILEPATH"
+    efibootmgr -qn "$bootnum"
+  elif $index; then
+    [[ -n $bootnum ]] || fatal "'%s' is not present in the EFI bootmenu" "$FILEPATH"
+    printf "%s\n" "$bootnum"
   else
     return 1
   fi
